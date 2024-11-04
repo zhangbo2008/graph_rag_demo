@@ -121,7 +121,7 @@ for passage_id, dataset_info in enumerate(nano_dataset):
             entities.append(triplet[2])
         relation = " ".join(triplet)
         if relation not in relations:
-            relations.append(relation)
+            relations.append(relation) # 这里看出来关系看做双边, a__关系___b, 那么 这个关系写入a的数组和b的数组.
             entityid_2_relationids[entities.index(triplet[0])].append(
                 len(relations) - 1
             )
@@ -275,18 +275,19 @@ relation_search_res = milvus_client.search(
 
 # 2.Expand Subgraph
 # 把上一步拿到的节点和关系进行拓展.
-
+print( entities,  relations , passages, '这里面realtion变量虽然指的是3元对,但是下面图中的relation实际指的是边的分类. 或者说就是 三元对的中间部分的字符串, 并且注意这里面重复的字符串算不同的关系,因为他们head , tail不同')
 
 entity_relation_adj = np.zeros((len(entities), len(relations))) # 邻接矩阵: 横坐标是entity, 纵坐标是relation, 如果存在关系就1.
 for entity_id, entity in enumerate(entities):
     entity_relation_adj[entity_id, entityid_2_relationids[entity_id]] = 1
 
 entity_relation_adj = csr_matrix(entity_relation_adj)
+# entity_relation_adj = entity_relation_adj
 
 entity_adj_1_degree = entity_relation_adj @ entity_relation_adj.T # entity之间的关系矩阵, 关系表示可以通过一条边相连的.
-relation_adj_1_degree = entity_relation_adj.T @ entity_relation_adj # 两个关系之间的关系, 表示两个关系之间可以从一个实体出发经过这个边再到一个实体.
+relation_adj_1_degree = entity_relation_adj.T @ entity_relation_adj # 两个关系之间的关系, 表示两个关系之间可以 边(i)-->元素-->边(j), 这个路径的数量(也就是中间元素的取法). 表示这个矩阵relation_adj_1_degree(i,j). !!!!!!!!!!!!!!!!!这个理解很重要.
 
-target_degree = 1 # 拓展一个.
+target_degree = 1 # 拓展一个degree.
 
 entity_adj_target_degree = entity_adj_1_degree
 for _ in range(target_degree - 1):
@@ -296,7 +297,7 @@ for _ in range(target_degree - 1):
     relation_adj_target_degree = relation_adj_target_degree * relation_adj_1_degree
 # entity_adj_target_degree : 元素到元素之间的链接, entity_relation_adj: 元素到关系支架难的链接. 乘积就是从entity到target的关系的临街矩阵.
 entity_relation_adj_target_degree = entity_adj_target_degree @ entity_relation_adj
-
+# entity_relation_adj_target_degree= 元素到边到元素*  元素-->边
 
 
 
@@ -331,7 +332,7 @@ filtered_hit_entity_ids = [
     for one_entity_res in one_entity_search_res
     # if one_entity_res['distance'] > entity_sim_filter_thresh
 ]
-
+# 根据query找到的entity, 拿entity去拓展图entity_relation_adj_target_degree 里面找到信息加到expanded_relations_from_entity里面.
 for filtered_hit_entity_id in filtered_hit_entity_ids:
     expanded_relations_from_entity.update(
         entity_relation_adj_target_degree[filtered_hit_entity_id].nonzero()[1].tolist()
@@ -404,7 +405,7 @@ def rerank_relations(
     )
     rerank_res = rerank_chain.invoke(
         {"question": query, "relation_des_str": relation_des_str}
-    )
+    )# 使用大模型进行rerank, 重新排序知识.
     rerank_relation_ids = []
     rerank_relation_lines = rerank_res["useful_relationships"]
     id_2_lines = {}
@@ -430,7 +431,7 @@ for relation_id in rerank_relation_ids:
         if passage_id not in final_passage_ids:
             final_passage_ids.append(passage_id)
             final_passages.append(passages[passage_id])
-passages_from_our_method = final_passages[:final_top_k]
+passages_from_our_method = final_passages[:final_top_k]#!!!!!!!!!!passages_from_our_method就是我们图rag得到的上下文.
 
 
 
